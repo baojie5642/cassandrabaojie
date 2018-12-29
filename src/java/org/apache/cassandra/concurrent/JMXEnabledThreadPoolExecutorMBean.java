@@ -18,8 +18,7 @@
 package apache.cassandra.concurrent;
 
 
-public interface JMXEnabledThreadPoolExecutorMBean
-{
+public interface JMXEnabledThreadPoolExecutorMBean {
     /**
      * Returns core pool size of thread pool.
      */

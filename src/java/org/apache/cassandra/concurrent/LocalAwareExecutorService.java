@@ -25,8 +25,7 @@ import org.apache.cassandra.concurrent.ExecutorLocals;
 
 import java.util.concurrent.ExecutorService;
 
-public interface LocalAwareExecutorService extends ExecutorService
-{
+public interface LocalAwareExecutorService extends ExecutorService {
     // we need a way to inject a TraceState directly into the Executor context without going through
     // the global Tracing sessions; see CASSANDRA-5668
     public void execute(Runnable command, ExecutorLocals locals);

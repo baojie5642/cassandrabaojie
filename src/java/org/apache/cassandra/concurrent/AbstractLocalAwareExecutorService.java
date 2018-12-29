@@ -35,195 +35,171 @@ import apache.cassandra.utils.concurrent.SimpleCondition;
 
 import static org.apache.cassandra.tracing.Tracing.isTracing;
 
-public abstract class AbstractLocalAwareExecutorService implements LocalAwareExecutorService
-{
+public abstract class AbstractLocalAwareExecutorService implements LocalAwareExecutorService {
     private static final Logger logger = LoggerFactory.getLogger(AbstractLocalAwareExecutorService.class);
 
     protected abstract void addTask(FutureTask<?> futureTask);
+
     protected abstract void onCompletion();
 
-    /** Task Submission / Creation / Objects **/
+    /**
+     * Task Submission / Creation / Objects
+     **/
 
-    public <T> FutureTask<T> submit(Callable<T> task)
-    {
+    public <T> FutureTask<T> submit(Callable<T> task) {
         return submit(newTaskFor(task));
     }
 
-    public FutureTask<?> submit(Runnable task)
-    {
+    public FutureTask<?> submit(Runnable task) {
         return submit(newTaskFor(task, null));
     }
 
-    public <T> FutureTask<T> submit(Runnable task, T result)
-    {
+    public <T> FutureTask<T> submit(Runnable task, T result) {
         return submit(newTaskFor(task, result));
     }
 
-    public <T> List<Future<T>> invokeAll(Collection<? extends Callable<T>> tasks)
-    {
+    public <T> List<Future<T>> invokeAll(Collection<? extends Callable<T>> tasks) {
         throw new UnsupportedOperationException();
     }
 
-    public <T> List<Future<T>> invokeAll(Collection<? extends Callable<T>> tasks, long timeout, TimeUnit unit) throws InterruptedException
-    {
+    public <T> List<Future<T>> invokeAll(Collection<? extends Callable<T>> tasks, long timeout,
+            TimeUnit unit) throws InterruptedException {
         throw new UnsupportedOperationException();
     }
 
-    public <T> T invokeAny(Collection<? extends Callable<T>> tasks) throws InterruptedException, ExecutionException
-    {
+    public <T> T invokeAny(Collection<? extends Callable<T>> tasks) throws InterruptedException, ExecutionException {
         throw new UnsupportedOperationException();
     }
 
-    public <T> T invokeAny(Collection<? extends Callable<T>> tasks, long timeout, TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException
-    {
+    public <T> T invokeAny(Collection<? extends Callable<T>> tasks, long timeout,
+            TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException {
         throw new UnsupportedOperationException();
     }
 
-    protected <T> FutureTask<T> newTaskFor(Runnable runnable, T result)
-    {
+    protected <T> FutureTask<T> newTaskFor(Runnable runnable, T result) {
         return newTaskFor(runnable, result, ExecutorLocals.create());
     }
 
-    protected <T> FutureTask<T> newTaskFor(Runnable runnable, T result, ExecutorLocals locals)
-    {
-        if (locals != null)
-        {
-            if (runnable instanceof LocalSessionFutureTask)
+    protected <T> FutureTask<T> newTaskFor(Runnable runnable, T result, ExecutorLocals locals) {
+        if (locals != null) {
+            if (runnable instanceof LocalSessionFutureTask) {
                 return (LocalSessionFutureTask<T>) runnable;
+            }
             return new LocalSessionFutureTask<T>(runnable, result, locals);
         }
-        if (runnable instanceof FutureTask)
+        if (runnable instanceof FutureTask) {
             return (FutureTask<T>) runnable;
+        }
         return new FutureTask<>(runnable, result);
     }
 
-    protected <T> FutureTask<T> newTaskFor(Callable<T> callable)
-    {
-        if (isTracing())
-        {
-            if (callable instanceof LocalSessionFutureTask)
+    protected <T> FutureTask<T> newTaskFor(Callable<T> callable) {
+        if (isTracing()) {
+            if (callable instanceof LocalSessionFutureTask) {
                 return (LocalSessionFutureTask<T>) callable;
+            }
             return new LocalSessionFutureTask<T>(callable, ExecutorLocals.create());
         }
-        if (callable instanceof FutureTask)
+        if (callable instanceof FutureTask) {
             return (FutureTask<T>) callable;
+        }
         return new FutureTask<>(callable);
     }
 
-    private class LocalSessionFutureTask<T> extends FutureTask<T>
-    {
+    private class LocalSessionFutureTask<T> extends FutureTask<T> {
         private final ExecutorLocals locals;
 
-        public LocalSessionFutureTask(Callable<T> callable, ExecutorLocals locals)
-        {
+        public LocalSessionFutureTask(Callable<T> callable, ExecutorLocals locals) {
             super(callable);
             this.locals = locals;
         }
 
-        public LocalSessionFutureTask(Runnable runnable, T result, ExecutorLocals locals)
-        {
+        public LocalSessionFutureTask(Runnable runnable, T result, ExecutorLocals locals) {
             super(runnable, result);
             this.locals = locals;
         }
 
-        public void run()
-        {
+        public void run() {
             ExecutorLocals old = ExecutorLocals.create();
             ExecutorLocals.set(locals);
-            try
-            {
+            try {
                 super.run();
-            }
-            finally
-            {
+            } finally {
                 ExecutorLocals.set(old);
             }
         }
     }
 
-    class FutureTask<T> extends SimpleCondition implements Future<T>, Runnable
-    {
+    class FutureTask<T> extends SimpleCondition implements Future<T>, Runnable {
         private boolean failure;
         private Object result = this;
         private final Callable<T> callable;
 
-        public FutureTask(Callable<T> callable)
-        {
+        public FutureTask(Callable<T> callable) {
             this.callable = callable;
         }
-        public FutureTask(Runnable runnable, T result)
-        {
+
+        public FutureTask(Runnable runnable, T result) {
             this(Executors.callable(runnable, result));
         }
 
-        public void run()
-        {
-            try
-            {
+        public void run() {
+            try {
                 result = callable.call();
-            }
-            catch (Throwable t)
-            {
+            } catch (Throwable t) {
                 JVMStabilityInspector.inspectThrowable(t);
                 logger.warn("Uncaught exception on thread {}: {}", Thread.currentThread(), t);
                 result = t;
                 failure = true;
-            }
-            finally
-            {
+            } finally {
                 signalAll();
                 onCompletion();
             }
         }
 
-        public boolean cancel(boolean mayInterruptIfRunning)
-        {
+        public boolean cancel(boolean mayInterruptIfRunning) {
             return false;
         }
 
-        public boolean isCancelled()
-        {
+        public boolean isCancelled() {
             return false;
         }
 
-        public boolean isDone()
-        {
+        public boolean isDone() {
             return isSignaled();
         }
 
-        public T get() throws InterruptedException, ExecutionException
-        {
+        public T get() throws InterruptedException, ExecutionException {
             await();
             Object result = this.result;
-            if (failure)
+            if (failure) {
                 throw new ExecutionException((Throwable) result);
+            }
             return (T) result;
         }
 
-        public T get(long timeout, TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException
-        {
-            if (!await(timeout, unit))
+        public T get(long timeout, TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException {
+            if (!await(timeout, unit)) {
                 throw new TimeoutException();
+            }
             Object result = this.result;
-            if (failure)
+            if (failure) {
                 throw new ExecutionException((Throwable) result);
+            }
             return (T) result;
         }
     }
 
-    private <T> FutureTask<T> submit(FutureTask<T> task)
-    {
+    private <T> FutureTask<T> submit(FutureTask<T> task) {
         addTask(task);
         return task;
     }
 
-    public void execute(Runnable command)
-    {
+    public void execute(Runnable command) {
         addTask(newTaskFor(command, ExecutorLocals.create()));
     }
 
-    public void execute(Runnable command, ExecutorLocals locals)
-    {
+    public void execute(Runnable command, ExecutorLocals locals) {
         addTask(newTaskFor(command, null, locals));
     }
 }

@@ -28,8 +28,7 @@ import apache.cassandra.utils.concurrent.WaitQueue;
 
 import static apache.cassandra.concurrent.SEPWorker.Work;
 
-public class SEPExecutor extends AbstractLocalAwareExecutorService
-{
+public class SEPExecutor extends AbstractLocalAwareExecutorService {
     private final SharedExecutorPool pool;
 
     public final int maxWorkers;
@@ -52,8 +51,7 @@ public class SEPExecutor extends AbstractLocalAwareExecutorService
     // TODO: see if other queue implementations might improve throughput
     protected final ConcurrentLinkedQueue<FutureTask<?>> tasks = new ConcurrentLinkedQueue<>();
 
-    SEPExecutor(SharedExecutorPool pool, int maxWorkers, int maxTasksQueued, String jmxPath, String name)
-    {
+    SEPExecutor(SharedExecutorPool pool, int maxWorkers, int maxTasksQueued, String jmxPath, String name) {
         this.pool = pool;
         this.name = name;
         this.maxWorkers = maxWorkers;
@@ -62,49 +60,47 @@ public class SEPExecutor extends AbstractLocalAwareExecutorService
         this.metrics = new SEPMetrics(this, jmxPath, name);
     }
 
-    protected void onCompletion()
-    {
+    protected void onCompletion() {
         completedTasks.incrementAndGet();
     }
 
     // schedules another worker for this pool if there is work outstanding and there are no spinning threads that
     // will self-assign to it in the immediate future
-    boolean maybeSchedule()
-    {
-        if (pool.spinningCount.get() > 0 || !takeWorkPermit(true))
+    boolean maybeSchedule() {
+        if (pool.spinningCount.get() > 0 || !takeWorkPermit(true)) {
             return false;
+        }
 
         pool.schedule(new Work(this));
         return true;
     }
 
-    protected void addTask(FutureTask<?> task)
-    {
-        // we add to the queue first, so that when a worker takes a task permit it can be certain there is a task available
+    @Override
+    protected void addTask(FutureTask<?> task) {
+        // we add to the queue first, so that when a worker takes a task permit it can be certain there is a task
+        // available
         // this permits us to schedule threads non-spuriously; it also means work is serviced fairly
         tasks.add(task);
         int taskPermits;
-        while (true)
-        {
+        while (true) {
             long current = permits.get();
             taskPermits = taskPermits(current);
-            // because there is no difference in practical terms between the work permit being added or not (the work is already in existence)
+            // because there is no difference in practical terms between the work permit being added or not (the work
+            // is already in existence)
             // we always add our permit, but block after the fact if we breached the queue limit
-            if (permits.compareAndSet(current, updateTaskPermits(current, taskPermits + 1)))
+            if (permits.compareAndSet(current, updateTaskPermits(current, taskPermits + 1))) {
                 break;
+            }
         }
 
-        if (taskPermits == 0)
-        {
+        if (taskPermits == 0) {
             // we only need to schedule a thread if there are no tasks already waiting to be processed, as
             // the original enqueue will have started a thread to service its work which will have itself
             // spawned helper workers that would have either exhausted the available tasks or are still being spawned.
             // to avoid incurring any unnecessary signalling penalties we also do not take any work to hand to the new
             // worker, we simply start a worker in a spinning state
             pool.maybeStartSpinningWorker();
-        }
-        else if (taskPermits >= maxTasksQueued)
-        {
+        } else if (taskPermits >= maxTasksQueued) {
             // register to receive a signal once a task is processed bringing the queue below its threshold
             WaitQueue.Signal s = hasRoom.register();
 
@@ -112,88 +108,81 @@ public class SEPExecutor extends AbstractLocalAwareExecutorService
             // however the advantage is that we never wake-up spuriously;
             // we choose to always sleep, even if in the intervening time the queue has dropped below limit,
             // so long as we _will_ eventually receive a signal
-            if (taskPermits(permits.get()) > maxTasksQueued)
-            {
+            if (taskPermits(permits.get()) > maxTasksQueued) {
                 // if we're blocking, we might as well directly schedule a worker if we aren't already at max
-                if (takeWorkPermit(true))
+                if (takeWorkPermit(true)) {
                     pool.schedule(new Work(this));
+                }
 
                 metrics.totalBlocked.inc();
                 metrics.currentBlocked.inc();
                 s.awaitUninterruptibly();
                 metrics.currentBlocked.dec();
-            }
-            else // don't propagate our signal when we cancel, just cancel
+            } else {
+                // don't propagate our signal when we cancel, just cancel
                 s.cancel();
+            }
         }
     }
 
     // takes permission to perform a task, if any are available; once taken it is guaranteed
     // that a proceeding call to tasks.poll() will return some work
-    boolean takeTaskPermit()
-    {
-        while (true)
-        {
+    boolean takeTaskPermit() {
+        while (true) {
             long current = permits.get();
             int taskPermits = taskPermits(current);
-            if (taskPermits == 0)
+            if (taskPermits == 0) {
                 return false;
-            if (permits.compareAndSet(current, updateTaskPermits(current, taskPermits - 1)))
-            {
-                if (taskPermits == maxTasksQueued && hasRoom.hasWaiters())
+            }
+            if (permits.compareAndSet(current, updateTaskPermits(current, taskPermits - 1))) {
+                if (taskPermits == maxTasksQueued && hasRoom.hasWaiters()) {
                     hasRoom.signalAll();
+                }
                 return true;
             }
         }
     }
 
-    // takes a worker permit and (optionally) a task permit simultaneously; if one of the two is unavailable, returns false
-    boolean takeWorkPermit(boolean takeTaskPermit)
-    {
+    // takes a worker permit and (optionally) a task permit simultaneously; if one of the two is unavailable, returns
+    // false
+    boolean takeWorkPermit(boolean takeTaskPermit) {
         int taskDelta = takeTaskPermit ? 1 : 0;
-        while (true)
-        {
+        while (true) {
             long current = permits.get();
             int workPermits = workPermits(current);
             int taskPermits = taskPermits(current);
-            if (workPermits == 0 || taskPermits == 0)
+            if (workPermits == 0 || taskPermits == 0) {
                 return false;
-            if (permits.compareAndSet(current, combine(taskPermits - taskDelta, workPermits - 1)))
-            {
-                if (takeTaskPermit && taskPermits == maxTasksQueued && hasRoom.hasWaiters())
+            }
+            if (permits.compareAndSet(current, combine(taskPermits - taskDelta, workPermits - 1))) {
+                if (takeTaskPermit && taskPermits == maxTasksQueued && hasRoom.hasWaiters()) {
                     hasRoom.signalAll();
+                }
                 return true;
             }
         }
     }
 
     // gives up a work permit
-    void returnWorkPermit()
-    {
-        while (true)
-        {
+    void returnWorkPermit() {
+        while (true) {
             long current = permits.get();
             int workPermits = workPermits(current);
-            if (permits.compareAndSet(current, updateWorkPermits(current, workPermits + 1)))
+            if (permits.compareAndSet(current, updateWorkPermits(current, workPermits + 1))) {
                 return;
+            }
         }
     }
 
-    public void maybeExecuteImmediately(Runnable command)
-    {
+    @Override
+    public void maybeExecuteImmediately(Runnable command) {
         FutureTask<?> ft = newTaskFor(command, null);
-        if (!takeWorkPermit(false))
-        {
+        if (!takeWorkPermit(false)) {
             addTask(ft);
-        }
-        else
-        {
-            try
-            {
+        } else {
+            try {
                 ft.run();
-            }
-            finally
-            {
+            } finally {
                 returnWorkPermit();
                 // we have to maintain our invariant of always scheduling after any work is performed
                 // in this case in particular we are not processing the rest of the queue anyway, and so
@@ -202,80 +191,68 @@ public class SEPExecutor extends AbstractLocalAwareExecutorService
             }
         }
     }
-
-    public synchronized void shutdown()
-    {
+    @Override
+    public synchronized void shutdown() {
         shuttingDown = true;
         pool.executors.remove(this);
-        if (getActiveCount() == 0)
+        if (getActiveCount() == 0) {
             shutdown.signalAll();
+        }
 
         // release metrics
         metrics.release();
     }
-
-    public synchronized List<Runnable> shutdownNow()
-    {
+    @Override
+    public synchronized List<Runnable> shutdownNow() {
         shutdown();
         List<Runnable> aborted = new ArrayList<>();
         while (takeTaskPermit())
             aborted.add(tasks.poll());
         return aborted;
     }
-
-    public boolean isShutdown()
-    {
+    @Override
+    public boolean isShutdown() {
         return shuttingDown;
     }
-
-    public boolean isTerminated()
-    {
+    @Override
+    public boolean isTerminated() {
         return shuttingDown && shutdown.isSignaled();
     }
-
-    public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException
-    {
+    @Override
+    public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
         shutdown.await(timeout, unit);
         return isTerminated();
     }
 
-    public long getPendingTasks()
-    {
+    public long getPendingTasks() {
         return taskPermits(permits.get());
     }
 
-    public long getCompletedTasks()
-    {
+    public long getCompletedTasks() {
         return completedTasks.get();
     }
 
-    public int getActiveCount()
-    {
+    public int getActiveCount() {
         return maxWorkers - workPermits(permits.get());
     }
 
-    private static int taskPermits(long both)
-    {
+    private static int taskPermits(long both) {
         return (int) both;
     }
 
-    private static int workPermits(long both)
-    {
+    private static int workPermits(long both) {
         return (int) (both >>> 32);
     }
 
-    private static long updateTaskPermits(long prev, int taskPermits)
-    {
+    private static long updateTaskPermits(long prev, int taskPermits) {
         return (prev & (-1L << 32)) | taskPermits;
     }
 
-    private static long updateWorkPermits(long prev, int workPermits)
-    {
+    private static long updateWorkPermits(long prev, int workPermits) {
         return (((long) workPermits) << 32) | (prev & (-1L >>> 32));
     }
 
-    private static long combine(int taskPermits, int workPermits)
-    {
+    private static long combine(int taskPermits, int workPermits) {
         return (((long) workPermits) << 32) | taskPermits;
     }
 }

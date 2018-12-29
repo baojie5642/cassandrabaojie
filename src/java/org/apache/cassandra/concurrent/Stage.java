@@ -22,8 +22,7 @@ import java.util.Arrays;
 import com.google.common.base.Predicate;
 import com.google.common.collect.Iterables;
 
-public enum Stage
-{
+public enum Stage {
     READ,
     MUTATION,
     COUNTER_MUTATION,
@@ -37,21 +36,16 @@ public enum Stage
     INTERNAL_RESPONSE,
     READ_REPAIR;
 
-    public static Iterable<Stage> jmxEnabledStages()
-    {
-        return Iterables.filter(Arrays.asList(values()), new Predicate<Stage>()
-        {
-            public boolean apply(Stage stage)
-            {
+    public static Iterable<Stage> jmxEnabledStages() {
+        return Iterables.filter(Arrays.asList(values()), new Predicate<Stage>() {
+            public boolean apply(Stage stage) {
                 return stage != TRACING;
             }
         });
     }
 
-    public String getJmxType()
-    {
-        switch (this)
-        {
+    public String getJmxType() {
+        switch (this) {
             case ANTI_ENTROPY:
             case GOSSIP:
             case MIGRATION:
@@ -71,11 +65,9 @@ public enum Stage
         }
     }
 
-    public String getJmxName()
-    {
+    public String getJmxName() {
         String name = "";
-        for (String word : toString().split("_"))
-        {
+        for (String word : toString().split("_")) {
             name += word.substring(0, 1) + word.substring(1).toLowerCase();
         }
         return name + "Stage";
