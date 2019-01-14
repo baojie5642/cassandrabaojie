@@ -64,8 +64,6 @@ import static apache.cassandra.concurrent.SEPWorker.Work;
  */
 public class SharedExecutorPool {
 
-    public static final SharedExecutorPool SHARED = new SharedExecutorPool("SharedPool");
-
     // the name assigned to workers in the pool, and the id suffix
     final String poolName;
     final AtomicLong workerId = new AtomicLong();
@@ -74,12 +72,14 @@ public class SharedExecutorPool {
     final List<SEPExecutor> executors = new CopyOnWriteArrayList<>();
 
     // the number of workers currently in a spinning state
+    // 处于自旋状态下的工作者的数量
     final AtomicInteger spinningCount = new AtomicInteger();
     // see SEPWorker.maybeStop() - used to self coordinate stopping of threads
     final AtomicLong stopCheck = new AtomicLong();
     // the collection of threads that are (most likely) in a spinning state - new workers are scheduled from here first
-    // TODO: consider using a queue partially-ordered by scheduled wake-up time
+    //
     // (a full-fledged correctly ordered SkipList is overkill)
+    // 正在处于自旋状态下的工作者集合，会从这里面调度线程去处理新到来的任务
     final ConcurrentSkipListMap<Long, SEPWorker> spinning = new ConcurrentSkipListMap<>();
     // the collection of threads that have been asked to stop/deschedule - new workers are scheduled from here last
     final ConcurrentSkipListMap<Long, SEPWorker> descheduled = new ConcurrentSkipListMap<>();
@@ -97,13 +97,52 @@ public class SharedExecutorPool {
         // are both
         // empty we schedule a new thread
         Map.Entry<Long, SEPWorker> e;
-        while (null != (e = spinning.pollFirstEntry()) || null != (e = descheduled.pollFirstEntry()))
-            if (e.getValue().assign(work, false)) {
-                return;
+        // 修改下这个方法，逻辑不变，使之更容易理解
+        for (; ; ) {
+            // 具有优先级的获取
+            e = spinning.pollFirstEntry();
+            if (null == e) {
+                // 具有优先级的获取
+                e = descheduled.pollFirstEntry();
+                // 如果两次获取都为null
+                // 那么跳出循环然后创建新的执行者
+                if (null == e) {
+                    break;
+                } else {
+                    if (weakUp(e, work)) {
+                        return;
+                    } else {
+                        continue;
+                    }
+                }
+            } else {
+                // 如果weakUp成功
+                // 那么直接返回方法
+                // 不创建新的执行者
+                if (weakUp(e, work)) {
+                    return;
+                } else {
+                    continue;
+                }
             }
-
+        }
+        // while (null != (e = spinning.pollFirstEntry()) || null != (e = descheduled.pollFirstEntry()))
+        // if (e.getValue().assign(work, false)) {
+        //    return;
+        // }
+        // 如果不是停止信号，那么创建一个新的工作者
         if (!work.isStop()) {
             new SEPWorker(workerId.incrementAndGet(), work, this);
+        }
+    }
+
+    private boolean weakUp(Map.Entry<Long, SEPWorker> e, Work work) {
+        SEPWorker exe = e.getValue();
+        if (null == exe) {
+            // 如果获取null，放回false，上层调用继续for循环
+            return false;
+        } else {
+            return exe.assign(work, false);
         }
     }
 
@@ -116,8 +155,8 @@ public class SharedExecutorPool {
         }
     }
 
-    public LocalAwareExecutorService newExecutor(int maxConcurrency, int maxQueuedTasks, String jmxPath, String name) {
-        SEPExecutor executor = new SEPExecutor(this, maxConcurrency, maxQueuedTasks, jmxPath, name);
+    public BaojieExecutorService newExecutor(int maxConcurrency, int maxQueuedTasks, String name) {
+        SEPExecutor executor = new SEPExecutor(this, maxConcurrency, maxQueuedTasks, name);
         executors.add(executor);
         return executor;
     }

@@ -30,7 +30,7 @@ import io.netty.util.concurrent.FastThreadLocalThread;
 final class SEPWorker extends AtomicReference<SEPWorker.Work> implements Runnable {
     private static final Logger logger = LoggerFactory.getLogger(SEPWorker.class);
     private static final boolean SET_THREAD_NAME = Boolean.parseBoolean(
-            System.getProperty("cassandra.set_sep_thread_name", "true"));
+            System.getProperty("baojie.set_sep_thread_name", "true"));
 
     final Long workerId;
     final Thread thread;
@@ -46,7 +46,9 @@ final class SEPWorker extends AtomicReference<SEPWorker.Work> implements Runnabl
     SEPWorker(Long workerId, Work initialState, SharedExecutorPool pool) {
         this.pool = pool;
         this.workerId = workerId;
-        thread = new FastThreadLocalThread(this, pool.poolName + "-Worker-" + workerId);
+        // 有必要使用netty的？？？
+        //thread = new FastThreadLocalThread(this, pool.poolName + "-Worker-" + workerId);
+        thread = new Thread(this, pool.poolName + "-Worker-" + workerId);
         thread.setDaemon(true);
         set(initialState);
         thread.start();
@@ -107,9 +109,11 @@ final class SEPWorker extends AtomicReference<SEPWorker.Work> implements Runnabl
                     assigned.maybeSchedule();
 
                     // we know there is work waiting, as we have a work permit, so poll() will always succeed
-                    task.run();
+                    // 加强处理，暂时还没确定这里为什么一定会取出task
+                    if (null != task) {
+                        task.run();
+                    }
                     task = null;
-
                     // if we're shutting down, or we fail to take a permit, we don't perform any more work
                     if ((shutdown = assigned.shuttingDown) || !assigned.takeTaskPermit()) {
                         break;
@@ -130,7 +134,7 @@ final class SEPWorker extends AtomicReference<SEPWorker.Work> implements Runnabl
                 }
             }
         } catch (Throwable t) {
-            JVMStabilityInspector.inspectThrowable(t);
+            //JVMStabilityInspector.inspectThrowable(t);
             while (true) {
                 if (get().assigned != null) {
                     assigned = get().assigned;
@@ -344,6 +348,7 @@ final class SEPWorker extends AtomicReference<SEPWorker.Work> implements Runnabl
             this.assigned = executor;
         }
 
+        // 如果声明的为静态的上述状态标志，那么设置为null
         private Work() {
             this.assigned = null;
         }
@@ -352,7 +357,28 @@ final class SEPWorker extends AtomicReference<SEPWorker.Work> implements Runnabl
             // we can assign work if there isn't new work already assigned and either
             // 1) we are assigning to ourselves
             // 2) the worker we are assigning to is not already in the middle of WORKING
-            return assigned == null && (self || !isWorking());
+            // 如果当前对象是上述对外提供公共使用的状态标记
+            // 如果是不是公共使用的状态标记
+            if (null != assigned) {
+                // 不能提供分发功能
+                // 因为不是标志
+                // 是一个执行器
+                return false;
+            } else {
+                // 如果参数允许分发，那么返回true
+                if (self) {
+                    return true;
+                } else {
+                    // 如果当前并没有工作
+                    // 那么也可以提供分发功能
+                    if (!isWorking()) {
+                        return true;
+                    } else {
+                        return false;
+                    }
+                }
+            }
+            //return assigned == null && (self || !isWorking());
         }
 
         boolean isSpinning() {

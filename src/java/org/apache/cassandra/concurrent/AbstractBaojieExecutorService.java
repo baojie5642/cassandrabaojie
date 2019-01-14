@@ -27,16 +27,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 import org.apache.cassandra.concurrent.ExecutorLocals;
-import org.apache.cassandra.utils.JVMStabilityInspector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import apache.cassandra.utils.concurrent.SimpleCondition;
 
-import static org.apache.cassandra.tracing.Tracing.isTracing;
+public abstract class AbstractBaojieExecutorService implements BaojieExecutorService {
+    private static final Logger logger = LoggerFactory.getLogger(AbstractBaojieExecutorService.class);
 
-public abstract class AbstractLocalAwareExecutorService implements LocalAwareExecutorService {
-    private static final Logger logger = LoggerFactory.getLogger(AbstractLocalAwareExecutorService.class);
 
     protected abstract void addTask(FutureTask<?> futureTask);
 
@@ -46,33 +44,38 @@ public abstract class AbstractLocalAwareExecutorService implements LocalAwareExe
      * Task Submission / Creation / Objects
      **/
 
+    @Override
     public <T> FutureTask<T> submit(Callable<T> task) {
         return submit(newTaskFor(task));
     }
 
+    @Override
     public FutureTask<?> submit(Runnable task) {
         return submit(newTaskFor(task, null));
     }
 
+    @Override
     public <T> FutureTask<T> submit(Runnable task, T result) {
         return submit(newTaskFor(task, result));
     }
 
+    @Override
     public <T> List<Future<T>> invokeAll(Collection<? extends Callable<T>> tasks) {
         throw new UnsupportedOperationException();
     }
 
-    public <T> List<Future<T>> invokeAll(Collection<? extends Callable<T>> tasks, long timeout,
-            TimeUnit unit) throws InterruptedException {
+    @Override
+    public <T> List<Future<T>> invokeAll(Collection<? extends Callable<T>> tasks, long timeout, TimeUnit unit) {
         throw new UnsupportedOperationException();
     }
 
-    public <T> T invokeAny(Collection<? extends Callable<T>> tasks) throws InterruptedException, ExecutionException {
+    @Override
+    public <T> T invokeAny(Collection<? extends Callable<T>> tasks) {
         throw new UnsupportedOperationException();
     }
 
-    public <T> T invokeAny(Collection<? extends Callable<T>> tasks, long timeout,
-            TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException {
+    @Override
+    public <T> T invokeAny(Collection<? extends Callable<T>> tasks, long timeout, TimeUnit unit) {
         throw new UnsupportedOperationException();
     }
 
@@ -81,12 +84,6 @@ public abstract class AbstractLocalAwareExecutorService implements LocalAwareExe
     }
 
     protected <T> FutureTask<T> newTaskFor(Runnable runnable, T result, ExecutorLocals locals) {
-        if (locals != null) {
-            if (runnable instanceof LocalSessionFutureTask) {
-                return (LocalSessionFutureTask<T>) runnable;
-            }
-            return new LocalSessionFutureTask<T>(runnable, result, locals);
-        }
         if (runnable instanceof FutureTask) {
             return (FutureTask<T>) runnable;
         }
@@ -94,40 +91,10 @@ public abstract class AbstractLocalAwareExecutorService implements LocalAwareExe
     }
 
     protected <T> FutureTask<T> newTaskFor(Callable<T> callable) {
-        if (isTracing()) {
-            if (callable instanceof LocalSessionFutureTask) {
-                return (LocalSessionFutureTask<T>) callable;
-            }
-            return new LocalSessionFutureTask<T>(callable, ExecutorLocals.create());
-        }
         if (callable instanceof FutureTask) {
             return (FutureTask<T>) callable;
         }
         return new FutureTask<>(callable);
-    }
-
-    private class LocalSessionFutureTask<T> extends FutureTask<T> {
-        private final ExecutorLocals locals;
-
-        public LocalSessionFutureTask(Callable<T> callable, ExecutorLocals locals) {
-            super(callable);
-            this.locals = locals;
-        }
-
-        public LocalSessionFutureTask(Runnable runnable, T result, ExecutorLocals locals) {
-            super(runnable, result);
-            this.locals = locals;
-        }
-
-        public void run() {
-            ExecutorLocals old = ExecutorLocals.create();
-            ExecutorLocals.set(locals);
-            try {
-                super.run();
-            } finally {
-                ExecutorLocals.set(old);
-            }
-        }
     }
 
     class FutureTask<T> extends SimpleCondition implements Future<T>, Runnable {
@@ -147,7 +114,7 @@ public abstract class AbstractLocalAwareExecutorService implements LocalAwareExe
             try {
                 result = callable.call();
             } catch (Throwable t) {
-                JVMStabilityInspector.inspectThrowable(t);
+                //JVMStabilityInspector.inspectThrowable(t);
                 logger.warn("Uncaught exception on thread {}: {}", Thread.currentThread(), t);
                 result = t;
                 failure = true;
@@ -157,18 +124,22 @@ public abstract class AbstractLocalAwareExecutorService implements LocalAwareExe
             }
         }
 
+        @Override
         public boolean cancel(boolean mayInterruptIfRunning) {
             return false;
         }
 
+        @Override
         public boolean isCancelled() {
             return false;
         }
 
+        @Override
         public boolean isDone() {
             return isSignaled();
         }
 
+        @Override
         public T get() throws InterruptedException, ExecutionException {
             await();
             Object result = this.result;
@@ -178,6 +149,7 @@ public abstract class AbstractLocalAwareExecutorService implements LocalAwareExe
             return (T) result;
         }
 
+        @Override
         public T get(long timeout, TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException {
             if (!await(timeout, unit)) {
                 throw new TimeoutException();
@@ -196,10 +168,7 @@ public abstract class AbstractLocalAwareExecutorService implements LocalAwareExe
     }
 
     public void execute(Runnable command) {
-        addTask(newTaskFor(command, ExecutorLocals.create()));
+        addTask(newTaskFor(command, null));
     }
 
-    public void execute(Runnable command, ExecutorLocals locals) {
-        addTask(newTaskFor(command, null, locals));
-    }
 }

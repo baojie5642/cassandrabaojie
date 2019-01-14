@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import apache.cassandra.utils.concurrent.SimpleCondition;
@@ -28,51 +29,60 @@ import apache.cassandra.utils.concurrent.WaitQueue;
 
 import static apache.cassandra.concurrent.SEPWorker.Work;
 
-public class SEPExecutor extends AbstractLocalAwareExecutorService {
+public class SEPExecutor extends AbstractBaojieExecutorService {
+
     private final SharedExecutorPool pool;
 
     public final int maxWorkers;
     public final String name;
     private final int maxTasksQueued;
-    private final SEPMetrics metrics;
 
     // stores both a set of work permits and task permits:
-    //  bottom 32 bits are number of queued tasks, in the range [0..maxTasksQueued]   (initially 0)
-    //  top 32 bits are number of work permits available in the range [0..maxWorkers]   (initially maxWorkers)
+    // bottom 32 bits are number of queued tasks, in the range [0..maxTasksQueued]   (initially 0)
+    // top 32 bits are number of work permits available in the range [0..maxWorkers]   (initially maxWorkers)
+    // 低32位任务队列的任务数
+    // 高32位保存任务执行者的可用数量
     private final AtomicLong permits = new AtomicLong();
 
     // producers wait on this when there is no room on the queue
+    // 一个等待队列，当任务被填满时，提交会阻塞等待在waitqueue上面
     private final WaitQueue hasRoom = new WaitQueue();
+
+    private final AtomicLong totalBlocked = new AtomicLong();
+    private final AtomicInteger currentlyBlocked = new AtomicInteger();
+
     private final AtomicLong completedTasks = new AtomicLong();
 
     volatile boolean shuttingDown = false;
     final SimpleCondition shutdown = new SimpleCondition();
 
-    // TODO: see if other queue implementations might improve throughput
     protected final ConcurrentLinkedQueue<FutureTask<?>> tasks = new ConcurrentLinkedQueue<>();
 
-    SEPExecutor(SharedExecutorPool pool, int maxWorkers, int maxTasksQueued, String jmxPath, String name) {
+    SEPExecutor(SharedExecutorPool pool, int maxWorkers, int maxTasksQueued, String name) {
         this.pool = pool;
         this.name = name;
         this.maxWorkers = maxWorkers;
         this.maxTasksQueued = maxTasksQueued;
         this.permits.set(combine(0, maxWorkers));
-        this.metrics = new SEPMetrics(this, jmxPath, name);
     }
 
+    @Override
     protected void onCompletion() {
         completedTasks.incrementAndGet();
     }
 
     // schedules another worker for this pool if there is work outstanding and there are no spinning threads that
     // will self-assign to it in the immediate future
+    // 当提交请求时
+    // 如果没有可用或者正在自旋的线程
+    // 那么新启动一个线程执行
     boolean maybeSchedule() {
         if (pool.spinningCount.get() > 0 || !takeWorkPermit(true)) {
             return false;
+        } else {
+            pool.schedule(new Work(this));
+            return true;
         }
-
-        pool.schedule(new Work(this));
-        return true;
     }
 
     @Override
@@ -114,10 +124,10 @@ public class SEPExecutor extends AbstractLocalAwareExecutorService {
                     pool.schedule(new Work(this));
                 }
 
-                metrics.totalBlocked.inc();
-                metrics.currentBlocked.inc();
+                totalBlocked.incrementAndGet();
+                currentlyBlocked.incrementAndGet();
                 s.awaitUninterruptibly();
-                metrics.currentBlocked.dec();
+                currentlyBlocked.decrementAndGet();
             } else {
                 // don't propagate our signal when we cancel, just cancel
                 s.cancel();
@@ -149,7 +159,9 @@ public class SEPExecutor extends AbstractLocalAwareExecutorService {
         int taskDelta = takeTaskPermit ? 1 : 0;
         while (true) {
             long current = permits.get();
+            // 获取可用工作者数量
             int workPermits = workPermits(current);
+            // 获取任务数量
             int taskPermits = taskPermits(current);
             if (workPermits == 0 || taskPermits == 0) {
                 return false;
@@ -191,6 +203,7 @@ public class SEPExecutor extends AbstractLocalAwareExecutorService {
             }
         }
     }
+
     @Override
     public synchronized void shutdown() {
         shuttingDown = true;
@@ -198,10 +211,8 @@ public class SEPExecutor extends AbstractLocalAwareExecutorService {
         if (getActiveCount() == 0) {
             shutdown.signalAll();
         }
-
-        // release metrics
-        metrics.release();
     }
+
     @Override
     public synchronized List<Runnable> shutdownNow() {
         shutdown();
@@ -210,14 +221,17 @@ public class SEPExecutor extends AbstractLocalAwareExecutorService {
             aborted.add(tasks.poll());
         return aborted;
     }
+
     @Override
     public boolean isShutdown() {
         return shuttingDown;
     }
+
     @Override
     public boolean isTerminated() {
         return shuttingDown && shutdown.isSignaled();
     }
+
     @Override
     public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
         shutdown.await(timeout, unit);
@@ -237,10 +251,12 @@ public class SEPExecutor extends AbstractLocalAwareExecutorService {
     }
 
     private static int taskPermits(long both) {
+        // 直接截取低32为，获取队列中的任务数
         return (int) both;
     }
 
     private static int workPermits(long both) {
+        // 向右移动32位，获取任务执行者的可用数量
         return (int) (both >>> 32);
     }
 
@@ -253,6 +269,7 @@ public class SEPExecutor extends AbstractLocalAwareExecutorService {
     }
 
     private static long combine(int taskPermits, int workPermits) {
+        // 将高位可用工作者数量与地位任务数量聚合到一起
         return (((long) workPermits) << 32) | taskPermits;
     }
 }

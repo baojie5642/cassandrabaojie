@@ -17,13 +17,10 @@
  */
 package apache.cassandra.concurrent;
 
-import java.util.concurrent.*;
-
-import org.apache.cassandra.concurrent.ExecutorLocals;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import static org.apache.cassandra.tracing.Tracing.isTracing;
+import java.util.concurrent.*;
 
 /**
  * This class encorporates some Executor best practices for Cassandra.  Most of the executors in the system
@@ -44,8 +41,11 @@ import static org.apache.cassandra.tracing.Tracing.isTracing;
  * threads and the queue is full, we want the enqueuer to block.  But to allow the number of threads to drop if a
  * stage is less busy, core thread timeout is enabled.
  */
-public class DebuggableThreadPoolExecutor extends ThreadPoolExecutor implements LocalAwareExecutorService {
+
+// 一个无论什么情况发生都会答印异常的线程池
+public class DebuggableThreadPoolExecutor extends ThreadPoolExecutor implements BaojieExecutorService {
     protected static final Logger logger = LoggerFactory.getLogger(DebuggableThreadPoolExecutor.class);
+
     public static final RejectedExecutionHandler blockingExecutionHandler = new RejectedExecutionHandler() {
         public void rejectedExecution(Runnable task, ThreadPoolExecutor executor) {
             ((DebuggableThreadPoolExecutor) executor).onInitialRejection(task);
@@ -144,64 +144,16 @@ public class DebuggableThreadPoolExecutor extends ThreadPoolExecutor implements 
     protected void onFinalRejection(Runnable task) {
     }
 
-    public void execute(Runnable command, ExecutorLocals locals) {
-        super.execute(locals == null || command instanceof LocalSessionWrapper
-                ? command
-                : new LocalSessionWrapper<Object>(command, locals));
-    }
-
+    @Override
     public void maybeExecuteImmediately(Runnable command) {
         execute(command);
-    }
-
-    // execute does not call newTaskFor
-    @Override
-    public void execute(Runnable command) {
-        super.execute(isTracing() && !(command instanceof LocalSessionWrapper)
-                ? new LocalSessionWrapper<Object>(Executors.callable(command, null))
-                : command);
-    }
-
-    @Override
-    protected <T> RunnableFuture<T> newTaskFor(Runnable runnable, T result) {
-        if (isTracing() && !(runnable instanceof LocalSessionWrapper)) {
-            return new LocalSessionWrapper<T>(Executors.callable(runnable, result));
-        }
-        return super.newTaskFor(runnable, result);
-    }
-
-    @Override
-    protected <T> RunnableFuture<T> newTaskFor(Callable<T> callable) {
-        if (isTracing() && !(callable instanceof LocalSessionWrapper)) {
-            return new LocalSessionWrapper<T>(callable);
-        }
-        return super.newTaskFor(callable);
     }
 
     @Override
     protected void afterExecute(Runnable r, Throwable t) {
         super.afterExecute(r, t);
 
-        maybeResetTraceSessionWrapper(r);
         logExceptionsAfterExecute(r, t);
-    }
-
-    protected static void maybeResetTraceSessionWrapper(Runnable r) {
-        if (r instanceof LocalSessionWrapper) {
-            LocalSessionWrapper tsw = (LocalSessionWrapper) r;
-            // we have to reset trace state as its presence is what denotes the current thread is tracing
-            // and if left this thread might start tracing unrelated tasks
-            tsw.reset();
-        }
-    }
-
-    @Override
-    protected void beforeExecute(Thread t, Runnable r) {
-        if (r instanceof LocalSessionWrapper) {
-            ((LocalSessionWrapper) r).setupContext();
-        }
-
-        super.beforeExecute(t, r);
     }
 
     /**
@@ -257,31 +209,4 @@ public class DebuggableThreadPoolExecutor extends ThreadPoolExecutor implements 
         return null;
     }
 
-    /**
-     * Used to wrap a Runnable or Callable passed to submit or execute so we can clone the ExecutorLocals and move
-     * them into the worker thread.
-     *
-     * @param <T>
-     */
-    private static class LocalSessionWrapper<T> extends FutureTask<T> {
-        private final ExecutorLocals locals;
-
-        public LocalSessionWrapper(Callable<T> callable) {
-            super(callable);
-            locals = ExecutorLocals.create();
-        }
-
-        public LocalSessionWrapper(Runnable command, ExecutorLocals locals) {
-            super(command, null);
-            this.locals = locals;
-        }
-
-        private void setupContext() {
-            ExecutorLocals.set(locals);
-        }
-
-        private void reset() {
-            ExecutorLocals.set(null);
-        }
-    }
 }
