@@ -200,12 +200,14 @@ public class SEPExecutor extends AbstractBaojieExecutorService {
             }
         }
     }
-
+    //empty ||
     @Override
     public synchronized void shutdown() {
         shuttingDown = true;
         pool.executors.remove(this);
-        if (getActiveCount() == 0) {
+        boolean empty = tasks.isEmpty();
+        long active = getActiveCount();
+        if (active == 0) {
             shutdown.signalAll();
         }
     }
