@@ -97,8 +97,9 @@ public class SimpleCondition implements Condition {
     @Override
     public void signalAll() {
         signaled = true;
-        if (waiting != null) {
-            waiting.signalAll();
+        WaitQueue temp = waiting;
+        if (temp != null) {
+            temp.signalAll();
         }
     }
 

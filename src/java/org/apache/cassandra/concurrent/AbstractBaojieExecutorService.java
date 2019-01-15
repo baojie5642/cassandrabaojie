@@ -26,7 +26,6 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import org.apache.cassandra.concurrent.ExecutorLocals;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -78,10 +77,6 @@ public abstract class AbstractBaojieExecutorService implements BaojieExecutorSer
     }
 
     protected <T> FutureTask<T> newTaskFor(Runnable runnable, T result) {
-        return newTaskFor(runnable, result, ExecutorLocals.create());
-    }
-
-    protected <T> FutureTask<T> newTaskFor(Runnable runnable, T result, ExecutorLocals locals) {
         if (runnable instanceof FutureTask) {
             return (FutureTask<T>) runnable;
         }
@@ -112,7 +107,7 @@ public abstract class AbstractBaojieExecutorService implements BaojieExecutorSer
             try {
                 result = callable.call();
             } catch (Throwable t) {
-                //JVMStabilityInspector.inspectThrowable(t);
+                JVMStabilityInspector.inspectThrowable(t);
                 logger.warn("Uncaught exception on thread {}: {}", Thread.currentThread(), t);
                 result = t;
                 failure = true;

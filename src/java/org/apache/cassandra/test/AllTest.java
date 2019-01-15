@@ -12,29 +12,28 @@ public class AllTest {
 
     public static void main(String args[]) {
         SharedExecutorPool share = new SharedExecutorPool("test-name");
-
-        BaojieExecutorService service = share.newExecutor(512, 1024, "test");
-        TestRunner runner= null;
-        for(;;){
-            runner=new TestRunner();
+        BaojieExecutorService service = share.newExecutor(555, 555, "test");
+        TestRunner runner = null;
+        for (int i = 0; i < 1; i++) {
+            runner = new TestRunner();
+            // 测试结果是，这里有些小问题，就是提交后马上关闭pool会出现丢任务情况
             service.submit(runner);
-            LockSupport.parkNanos(TimeUnit.NANOSECONDS.convert(300, TimeUnit.MICROSECONDS));
+            //
         }
-
+        //LockSupport.parkNanos(TimeUnit.NANOSECONDS.convert(9, TimeUnit.SECONDS));
+        service.shutdown();
     }
-
 
     public static final class TestRunner implements Runnable {
         private static final Logger logger = LoggerFactory.getLogger(TestRunner.class);
 
         @Override
         public void run() {
-            //logger.debug("park myself");
-            LockSupport.parkNanos(TimeUnit.NANOSECONDS.convert(1, TimeUnit.SECONDS));
-            //logger.debug("unpark myself");
+            logger.debug("park myself");
+            LockSupport.parkNanos(TimeUnit.NANOSECONDS.convert(6, TimeUnit.SECONDS));
+            logger.debug("unpark myself");
+            throw new OutOfMemoryError("test");
         }
-
     }
-
 
 }

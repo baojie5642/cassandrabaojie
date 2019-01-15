@@ -72,7 +72,7 @@ public class LogScheduledPool extends ScheduledThreadPoolExecutor {
             try {
                 runnable.run();
             } catch (Throwable t) {
-                //JVMStabilityInspector.inspectThrowable(t);
+                JVMStabilityInspector.inspectThrowable(t);
                 LogThreadPool.handleOrLog(t);
             }
         }
