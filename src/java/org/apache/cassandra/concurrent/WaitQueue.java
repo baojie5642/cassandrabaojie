@@ -16,77 +16,32 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package apache.cassandra.utils.concurrent;
+package apache.cassandra.concurrent;
 
 import java.util.Iterator;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.locks.LockSupport;
 
-import com.codahale.metrics.Timer;
-
-/**
- * <p>A relatively easy to use utility for general purpose thread signalling.</p>
- * <p>Usage on a thread awaiting a state change using a WaitQueue q is:</p>
- * <pre>
- * {@code
- *      while (!conditionMet())
- *          Signal s = q.register();
- *              if (!conditionMet())    // or, perhaps more correctly, !conditionChanged()
- *                  s.await();
- *              else
- *                  s.cancel();
- * }
- * </pre>
- * A signalling thread, AFTER changing the state, then calls q.signal() to wake up one, or q.signalAll()
- * to wake up all, waiting threads.
- * <p>To understand intuitively how this class works, the idea is simply that a thread, once it considers itself
- * incapable of making progress, registers to be awoken once that changes. Since this could have changed between
- * checking and registering (in which case the thread that made this change would have been unable to signal it),
- * it checks the condition again, sleeping only if it hasn't changed/still is not met.</p>
- * <p>This thread synchronisation scheme has some advantages over Condition objects and Object.wait/notify in that no
- * monitor
- * acquisition is necessary and, in fact, besides the actual waiting on a signal, all operations are non-blocking.
- * As a result consumers can never block producers, nor each other, or vice versa, from making progress.
- * Threads that are signalled are also put into a RUNNABLE state almost simultaneously, so they can all immediately make
- * progress without having to serially acquire the monitor/lock, reducing scheduler delay incurred.</p>
- *
- * <p>A few notes on utilisation:</p>
- * <p>1. A thread will only exit await() when it has been signalled, but this does not guarantee the condition has not
- * been altered since it was signalled, and depending on your design it is likely the outer condition will need to be
- * checked in a loop, though this is not always the case.</p>
- * <p>2. Each signal is single use, so must be re-registered after each await(). This is true even if it times out.</p>
- * <p>3. If you choose not to wait on the signal (because the condition has been met before you waited on it)
- * you must cancel() the signal if the signalling thread uses signal() to awake waiters; otherwise signals will be
- * lost. If signalAll() is used but infrequent, and register() is frequent, cancel() should still be used to prevent the
- * queue growing unboundedly. Similarly, if you provide a TimerContext, cancel should be used to ensure it is not
- * erroneously
- * counted towards wait time.</p>
- * <p>4. Care must be taken when selecting conditionMet() to ensure we are waiting on the condition that actually
- * indicates progress is possible. In some complex cases it may be tempting to wait on a condition that is only
- * indicative
- * of local progress, not progress on the task we are aiming to complete, and a race may leave us waiting for a
- * condition
- * to be met that we no longer need.
- * <p>5. This scheme is not fair</p>
- * <p>6. Only the thread that calls register() may call await()</p>
- */
+// done
 public final class WaitQueue {
 
     private static final int CANCELLED = -1;
     private static final int SIGNALLED = 1;
     private static final int NOT_SET = 0;
 
-    private static final AtomicIntegerFieldUpdater signalledUpdater = AtomicIntegerFieldUpdater.newUpdater(
+    private static final AtomicIntegerFieldUpdater updater = AtomicIntegerFieldUpdater.newUpdater(
             RegisteredSignal.class, "state");
 
     // the waiting signals
     private final ConcurrentLinkedQueue<RegisteredSignal> queue = new ConcurrentLinkedQueue<>();
 
+    protected WaitQueue() {
+
+    }
+
     /**
      * The calling thread MUST be the thread that uses the signal
-     *
-     * @return x
      */
     public Signal register() {
         RegisteredSignal signal = new RegisteredSignal();
@@ -97,15 +52,30 @@ public final class WaitQueue {
     /**
      * Signal one waiting thread
      */
+    // 唤醒一个等待的信号量
     public boolean signal() {
         if (!hasWaiters()) {
             return false;
         }
         while (true) {
             RegisteredSignal s = queue.poll();
-            if (s == null || s.signal() != null) {
-                return s != null;
+            if (null == s) {
+                // 因为s != null，结果为假
+                return false;
+            } else if (null != s.signal()) {
+                // 如果取出不为null，那么继续取
+                // 如果同时唤醒成功(也就是返回值不为null)
+                // 那么需要直接返回的
+                return true;
+            } else {
+                // 如果取出但是没有唤醒成功
+                // 那么继续
+                continue;
             }
+            // 这种逻辑比较难理解改造下
+            // if (s == null || s.signal() != null) {
+            // return s != null;
+            // }
         }
     }
 
@@ -121,36 +91,41 @@ public final class WaitQueue {
         // we finish signalling it all, we pick a random thread we have woken-up and hold onto it, so that if we
         // encounter
         // it again we know we're looping. We reselect a random thread periodically, progressively less often.
-        // the "correct" solution to this problem is to use a queue that permits snapshot iteration, but this
+        // the "correct" solution to this problem is to use a queue that permits snapshot(快照) iteration, but this
         // solution is sufficient
         int i = 0, s = 5;
         Thread randomThread = null;
         Iterator<RegisteredSignal> iter = queue.iterator();
         while (iter.hasNext()) {
             RegisteredSignal signal = iter.next();
+            if (null == signal) {
+                continue;
+            }
             Thread signalled = signal.signal();
-
+            // 如果不为null，唤醒成功
             if (signalled != null) {
+                // 如果这个随机的thread等于唤醒返回的thread
+                // 说明之前的一个线程已经再次等待了
+                // 所以这里竞争，那么此时可以返回了
                 if (signalled == randomThread) {
                     break;
                 }
-
                 if (++i == s) {
                     randomThread = signalled;
                     s <<= 1;
                 }
             }
-
             iter.remove();
         }
     }
 
     private void cleanUpCancelled() {
         // TODO: attempt to remove the cancelled from the beginning only (need atomic cas of head)
+        // 为什么使用迭代器？为什么不使用queue的remove直接删除？
         Iterator<RegisteredSignal> iter = queue.iterator();
         while (iter.hasNext()) {
             RegisteredSignal s = iter.next();
-            if (s.isCancelled()) {
+            if (null != s && s.isCancelled()) {
                 iter.remove();
             }
         }
@@ -258,6 +233,12 @@ public final class WaitQueue {
      * An abstract signal implementation
      */
     public static abstract class AbstractSignal implements Signal {
+
+        protected AbstractSignal() {
+
+        }
+
+        @Override
         public void awaitUninterruptibly() {
             boolean interrupted = false;
             while (!isSignalled()) {
@@ -272,6 +253,7 @@ public final class WaitQueue {
             checkAndClear();
         }
 
+        @Override
         public void await() throws InterruptedException {
             while (!isSignalled()) {
                 checkInterrupted();
@@ -280,6 +262,7 @@ public final class WaitQueue {
             checkAndClear();
         }
 
+        @Override
         public boolean awaitUntil(long until) throws InterruptedException {
             long now;
             while (until > (now = System.nanoTime()) && !isSignalled()) {
@@ -302,58 +285,119 @@ public final class WaitQueue {
      * A signal registered with this WaitQueue
      */
     private class RegisteredSignal extends AbstractSignal {
+        // 创建时候保存下创建当前对象的线程引用
         private volatile Thread thread = Thread.currentThread();
         volatile int state;
 
+        // 是否已经被唤醒
+        @Override
         public boolean isSignalled() {
             return state == SIGNALLED;
         }
 
+        // 是否已经被取消
+        @Override
         public boolean isCancelled() {
             return state == CANCELLED;
         }
 
+        // 是否已经设置了一个值
+        @Override
         public boolean isSet() {
             return state != NOT_SET;
         }
 
         private Thread signal() {
-            if (!isSet() && signalledUpdater.compareAndSet(this, NOT_SET, SIGNALLED)) {
+            // 如果没有设置状态并且cas成功
+            // 那么唤醒创建这个信号的线程
+            // 如果状态已经设置，那么直接返回null
+            if (isSet()) {
+                return null;
+            } else if (updater.compareAndSet(this, NOT_SET, SIGNALLED)) {
+                // 如果cas成功，则唤醒线程
                 Thread thread = this.thread;
                 LockSupport.unpark(thread);
+                // 这个方法完成，说明此信号已经被废弃掉
                 this.thread = null;
+                // 返回创建当前对象的线程
                 return thread;
+            } else {
+                return null;
             }
-            return null;
+            // if (!isSet() && updater.compareAndSet(this, NOT_SET, SIGNALLED)) {
+            // Thread thread = this.thread;
+            // LockSupport.unpark(thread);
+            // this.thread = null;
+            // 返回创建当前对象的线程
+            // return thread;
+            // } else {
+            //    return null;
+            // }
         }
 
+        @Override
         public boolean checkAndClear() {
-            if (!isSet() && signalledUpdater.compareAndSet(this, NOT_SET, CANCELLED)) {
+            if (isSet()) {
+                return true;
+            } else if (updater.compareAndSet(this, NOT_SET, CANCELLED)) {
                 thread = null;
                 cleanUpCancelled();
                 return false;
+            } else {
+                return true;
             }
+            // 这两种写法的区别？？？
+            // if (!isSet() && updater.compareAndSet(this, NOT_SET, CANCELLED)) {
+            // thread = null;
+            // cleanUpCancelled();
+            // return false;
+            // }
             // must now be signalled assuming correct API usage
-            return true;
+            // return true;
         }
 
         /**
          * Should only be called by the registered thread. Indicates the signal can be retired,
          * and if signalled propagates the signal to another waiting thread
          */
+        @Override
         public void cancel() {
+            // 如果已经被取消，直接返回
             if (isCancelled()) {
                 return;
             }
-            if (!signalledUpdater.compareAndSet(this, NOT_SET, CANCELLED)) {
-                // must already be signalled - switch to cancelled and
-                state = CANCELLED;
-                // propagate the signal
-                WaitQueue.this.signal();
+            // 如果设置失败，那么进行唤醒
+            if (!setCancelState()) {
+                setAndSignal();
             }
+            release();
+        }
+
+        private boolean setCancelState() {
+            if (updater.compareAndSet(this, NOT_SET, CANCELLED)) {
+                return true;
+            } else {
+                return false;
+            }
+        }
+
+        private void setAndSignal() {
+            // must already be signalled - switch to cancelled and
+            // 如果cas失败，说明状态已经被设置了(设置成取消或者唤醒)
+            // 那么这时再设置为取消没有问题
+            state = CANCELLED;
+            // propagate the signal
+            // 取消一个，唤醒一个
+            WaitQueue.this.signal();
+        }
+
+        private void release() {
+            // 线程已经被unpark
             thread = null;
+            // 移除那些被取消的信号
             cleanUpCancelled();
         }
+
     }
 
 
@@ -367,6 +411,7 @@ public final class WaitQueue {
             this.signals = signals;
         }
 
+        @Override
         public boolean isCancelled() {
             for (Signal signal : signals)
                 if (!signal.isCancelled()) {
@@ -375,12 +420,14 @@ public final class WaitQueue {
             return true;
         }
 
+        @Override
         public boolean checkAndClear() {
             for (Signal signal : signals)
                 signal.checkAndClear();
             return isSignalled();
         }
 
+        @Override
         public void cancel() {
             for (Signal signal : signals)
                 signal.cancel();
@@ -391,10 +438,12 @@ public final class WaitQueue {
      * A Signal that wraps multiple Signals and returns when any single one of them would have returned
      */
     private static class AnySignal extends MultiSignal {
+
         protected AnySignal(Signal... signals) {
             super(signals);
         }
 
+        @Override
         public boolean isSignalled() {
             for (Signal signal : signals)
                 if (signal.isSignalled()) {
@@ -403,6 +452,7 @@ public final class WaitQueue {
             return false;
         }
 
+        @Override
         public boolean isSet() {
             for (Signal signal : signals)
                 if (signal.isSet()) {
@@ -420,6 +470,7 @@ public final class WaitQueue {
             super(signals);
         }
 
+        @Override
         public boolean isSignalled() {
             for (Signal signal : signals)
                 if (!signal.isSignalled()) {
@@ -428,6 +479,7 @@ public final class WaitQueue {
             return true;
         }
 
+        @Override
         public boolean isSet() {
             for (Signal signal : signals)
                 if (!signal.isSet()) {

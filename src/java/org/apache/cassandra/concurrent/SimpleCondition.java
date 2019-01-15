@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package apache.cassandra.utils.concurrent;
+package apache.cassandra.concurrent;
 
 import java.util.Date;
 import java.util.concurrent.TimeUnit;
@@ -25,30 +25,49 @@ import java.util.concurrent.locks.Condition;
 // fulfils the Condition interface without spurious wakeup problems
 // (or lost notify problems either: that is, even if you call await()
 // _after_ signal(), it will work as desired.)
+
+// done
 public class SimpleCondition implements Condition {
-    private static final AtomicReferenceFieldUpdater<SimpleCondition, WaitQueue> waitingUpdater =
-            AtomicReferenceFieldUpdater.newUpdater(
-            SimpleCondition.class, WaitQueue.class, "waiting");
+    // 这种方式经常用来构建lockfree并发工具
+    private static final AtomicReferenceFieldUpdater<SimpleCondition, WaitQueue> updater =
+            AtomicReferenceFieldUpdater.newUpdater(SimpleCondition.class, WaitQueue.class, "waiting");
 
     private volatile WaitQueue waiting;
     private volatile boolean signaled = false;
 
+    protected SimpleCondition() {
+
+    }
+
+    @Override
     public void await() throws InterruptedException {
+        // 已经被唤醒，那么直接返回
         if (isSignaled()) {
             return;
         }
+        // 如果队列为null，那么cas一个
+        // 虽然可能会创建多余的new对象
+        // 但是不重要，不必强行同步
         if (waiting == null) {
-            waitingUpdater.compareAndSet(this, null, new WaitQueue());
+            updater.compareAndSet(this, null, new WaitQueue());
         }
+        // 将自己注册到队列上，同时获得一个信号
         WaitQueue.Signal s = waiting.register();
+        // 如果被唤醒，那么取消
         if (isSignaled()) {
             s.cancel();
         } else {
+            // 如果没有被唤醒，那么一直等待
+            /**
+             *   TODO 这里可能需要修改
+             **/
             s.await();
         }
+        // 正常结束，那么断言
         assert isSignaled();
     }
 
+    @Override
     public boolean await(long time, TimeUnit unit) throws InterruptedException {
         if (isSignaled()) {
             return true;
@@ -56,7 +75,7 @@ public class SimpleCondition implements Condition {
         long start = System.nanoTime();
         long until = start + unit.toNanos(time);
         if (waiting == null) {
-            waitingUpdater.compareAndSet(this, null, new WaitQueue());
+            updater.compareAndSet(this, null, new WaitQueue());
         }
         WaitQueue.Signal s = waiting.register();
         if (isSignaled()) {
@@ -66,6 +85,7 @@ public class SimpleCondition implements Condition {
         return s.awaitUntil(until) || isSignaled();
     }
 
+    @Override
     public void signal() {
         throw new UnsupportedOperationException();
     }
@@ -74,6 +94,7 @@ public class SimpleCondition implements Condition {
         return signaled;
     }
 
+    @Override
     public void signalAll() {
         signaled = true;
         if (waiting != null) {
@@ -81,15 +102,18 @@ public class SimpleCondition implements Condition {
         }
     }
 
+    @Override
     public void awaitUninterruptibly() {
         throw new UnsupportedOperationException();
     }
 
-    public long awaitNanos(long nanosTimeout) throws InterruptedException {
+    @Override
+    public long awaitNanos(long nanosTimeout) {
         throw new UnsupportedOperationException();
     }
 
-    public boolean awaitUntil(Date deadline) throws InterruptedException {
+    @Override
+    public boolean awaitUntil(Date deadline) {
         throw new UnsupportedOperationException();
     }
 }

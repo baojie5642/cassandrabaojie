@@ -24,22 +24,22 @@ import org.slf4j.LoggerFactory;
 
 
 /**
- * Like DebuggableThreadPoolExecutor, DebuggableScheduledThreadPoolExecutor always
+ * Like LogThreadPool, LogScheduledPool always
  * logs exceptions from the tasks it is given, even if Future.get is never called elsewhere.
  * <p>
- * DebuggableScheduledThreadPoolExecutor also catches exceptions during Task execution
+ * LogScheduledPool also catches exceptions during Task execution
  * so that they don't supress subsequent invocations of the task.
  */
 // 一个无论什么情况发生都会答印异常的定时任务线程池
-public class DebuggableScheduledThreadPoolExecutor extends ScheduledThreadPoolExecutor {
-    private static final Logger logger = LoggerFactory.getLogger(DebuggableScheduledThreadPoolExecutor.class);
+public class LogScheduledPool extends ScheduledThreadPoolExecutor {
+    private static final Logger logger = LoggerFactory.getLogger(LogScheduledPool.class);
 
-    public DebuggableScheduledThreadPoolExecutor(int corePoolSize, String threadPoolName, int priority) {
+    public LogScheduledPool(int corePoolSize, String threadPoolName, int priority) {
         super(corePoolSize, new NamedThreadFactory(threadPoolName, priority));
     }
 
 
-    public DebuggableScheduledThreadPoolExecutor(String threadPoolName) {
+    public LogScheduledPool(String threadPoolName) {
         this(1, threadPoolName, Thread.NORM_PRIORITY);
     }
 
@@ -47,7 +47,7 @@ public class DebuggableScheduledThreadPoolExecutor extends ScheduledThreadPoolEx
     @Override
     public void afterExecute(Runnable r, Throwable t) {
         super.afterExecute(r, t);
-        DebuggableThreadPoolExecutor.logExceptionsAfterExecute(r, t);
+        LogThreadPool.logExceptionsAfterExecute(r, t);
     }
 
     // override scheduling to supress exceptions that would cancel future executions
@@ -73,7 +73,7 @@ public class DebuggableScheduledThreadPoolExecutor extends ScheduledThreadPoolEx
                 runnable.run();
             } catch (Throwable t) {
                 //JVMStabilityInspector.inspectThrowable(t);
-                DebuggableThreadPoolExecutor.handleOrLog(t);
+                LogThreadPool.handleOrLog(t);
             }
         }
     }

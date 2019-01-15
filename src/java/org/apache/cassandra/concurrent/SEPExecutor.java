@@ -24,9 +24,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-import apache.cassandra.utils.concurrent.SimpleCondition;
-import apache.cassandra.utils.concurrent.WaitQueue;
-
 import static apache.cassandra.concurrent.SEPWorker.Work;
 
 public class SEPExecutor extends AbstractBaojieExecutorService {

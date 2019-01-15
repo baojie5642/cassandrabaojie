@@ -43,21 +43,21 @@ import java.util.concurrent.*;
  */
 
 // 一个无论什么情况发生都会答印异常的线程池
-public class DebuggableThreadPoolExecutor extends ThreadPoolExecutor implements BaojieExecutorService {
-    protected static final Logger logger = LoggerFactory.getLogger(DebuggableThreadPoolExecutor.class);
+public class LogThreadPool extends ThreadPoolExecutor implements BaojieExecutorService {
+    protected static final Logger logger = LoggerFactory.getLogger(LogThreadPool.class);
 
     public static final RejectedExecutionHandler blockingExecutionHandler = new RejectedExecutionHandler() {
         public void rejectedExecution(Runnable task, ThreadPoolExecutor executor) {
-            ((DebuggableThreadPoolExecutor) executor).onInitialRejection(task);
+            ((LogThreadPool) executor).onInitialRejection(task);
             BlockingQueue<Runnable> queue = executor.getQueue();
             while (true) {
                 if (executor.isShutdown()) {
-                    ((DebuggableThreadPoolExecutor) executor).onFinalRejection(task);
+                    ((LogThreadPool) executor).onFinalRejection(task);
                     throw new RejectedExecutionException("ThreadPoolExecutor has shut down");
                 }
                 try {
                     if (queue.offer(task, 1000, TimeUnit.MILLISECONDS)) {
-                        ((DebuggableThreadPoolExecutor) executor).onFinalAccept(task);
+                        ((LogThreadPool) executor).onFinalAccept(task);
                         break;
                     }
                 } catch (InterruptedException e) {
@@ -67,17 +67,17 @@ public class DebuggableThreadPoolExecutor extends ThreadPoolExecutor implements 
         }
     };
 
-    public DebuggableThreadPoolExecutor(String threadPoolName, int priority) {
+    public LogThreadPool(String threadPoolName, int priority) {
         this(1, Integer.MAX_VALUE, TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>(),
                 new NamedThreadFactory(threadPoolName, priority));
     }
 
-    public DebuggableThreadPoolExecutor(int corePoolSize, long keepAliveTime, TimeUnit unit,
+    public LogThreadPool(int corePoolSize, long keepAliveTime, TimeUnit unit,
             BlockingQueue<Runnable> queue, ThreadFactory factory) {
         this(corePoolSize, corePoolSize, keepAliveTime, unit, queue, factory);
     }
 
-    public DebuggableThreadPoolExecutor(int corePoolSize, int maximumPoolSize, long keepAliveTime, TimeUnit unit,
+    public LogThreadPool(int corePoolSize, int maximumPoolSize, long keepAliveTime, TimeUnit unit,
             BlockingQueue<Runnable> workQueue, ThreadFactory threadFactory) {
         super(corePoolSize, maximumPoolSize, keepAliveTime, unit, workQueue, threadFactory);
         allowCoreThreadTimeOut(true);
@@ -96,10 +96,10 @@ public class DebuggableThreadPoolExecutor extends ThreadPoolExecutor implements 
      * available.
      *
      * @param threadPoolName the name of the threads created by this executor
-     * @return The new DebuggableThreadPoolExecutor
+     * @return The new LogThreadPool
      */
-    public static DebuggableThreadPoolExecutor createCachedThreadpoolWithMaxSize(String threadPoolName) {
-        return new DebuggableThreadPoolExecutor(0, Integer.MAX_VALUE,
+    public static LogThreadPool createCachedThreadpoolWithMaxSize(String threadPoolName) {
+        return new LogThreadPool(0, Integer.MAX_VALUE,
                 60L, TimeUnit.SECONDS,
                 new SynchronousQueue<Runnable>(),
                 new NamedThreadFactory(threadPoolName));
@@ -112,9 +112,9 @@ public class DebuggableThreadPoolExecutor extends ThreadPoolExecutor implements 
      *
      * @param threadPoolName the name of the threads created by this executor
      * @param size           the fixed number of threads for this executor
-     * @return the new DebuggableThreadPoolExecutor
+     * @return the new LogThreadPool
      */
-    public static DebuggableThreadPoolExecutor createWithFixedPoolSize(String threadPoolName, int size) {
+    public static LogThreadPool createWithFixedPoolSize(String threadPoolName, int size) {
         return createWithMaximumPoolSize(threadPoolName, size, Integer.MAX_VALUE, TimeUnit.SECONDS);
     }
 
@@ -127,11 +127,11 @@ public class DebuggableThreadPoolExecutor extends ThreadPoolExecutor implements 
      * @param size           the maximum number of threads for this executor
      * @param keepAliveTime  the time an idle thread is kept alive before being terminated
      * @param unit           tht time unit for {@code keepAliveTime}
-     * @return the new DebuggableThreadPoolExecutor
+     * @return the new LogThreadPool
      */
-    public static DebuggableThreadPoolExecutor createWithMaximumPoolSize(String threadPoolName, int size,
+    public static LogThreadPool createWithMaximumPoolSize(String threadPoolName, int size,
             int keepAliveTime, TimeUnit unit) {
-        return new DebuggableThreadPoolExecutor(size, Integer.MAX_VALUE, keepAliveTime, unit,
+        return new LogThreadPool(size, Integer.MAX_VALUE, keepAliveTime, unit,
                 new LinkedBlockingQueue<Runnable>(), new NamedThreadFactory(threadPoolName));
     }
 

@@ -30,8 +30,6 @@ import org.apache.cassandra.concurrent.ExecutorLocals;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import apache.cassandra.utils.concurrent.SimpleCondition;
-
 public abstract class AbstractBaojieExecutorService implements BaojieExecutorService {
     private static final Logger logger = LoggerFactory.getLogger(AbstractBaojieExecutorService.class);
 
